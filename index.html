@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Ars Technica — Top articles (cards)</title>
+<style>
+  :root{
+    --bg:#f7f7f7; --card:#fff; --text:#111; --muted:#555; --accent:#0b66ff;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0b0d10; --card:#0f1113; --text:#e6e6e6; --muted:#9aa0a6; --accent:#6aa6ff; }
+  }
+  body{
+    margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;
+    background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+  }
+  .wrap{ max-width:1100px; margin:18px auto; padding:14px; }
+  h1{ font-size:1.05rem; margin:0 0 12px 0; display:flex; align-items:center; gap:12px; }
+  .meta{ font-size:0.85rem; color:var(--muted) }
+  .grid{ display:grid; gap:14px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); margin-top:12px; }
+  .card{
+    background:var(--card); border-radius:12px; overflow:hidden; box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+    display:flex; flex-direction:column; min-height:160px;
+  }
+  .thumb{ width:100%; height:150px; object-fit:cover; background:#ddd; flex-shrink:0; }
+  .body{ padding:12px; display:flex; flex-direction:column; gap:8px; flex:1 }
+  .title{ font-weight:600; font-size:0.98rem; line-height:1.25; color:var(--text); text-decoration:none; }
+  .excerpt{ font-size:0.9rem; color:var(--muted); margin-top:2px; flex:1; }
+  .footer{ display:flex; gap:8px; align-items:center; justify-content:space-between; margin-top:8px; }
+  .read{ padding:6px 10px; border-radius:8px; font-weight:600; background:transparent; border:1px solid rgba(0,0,0,0.06); color:var(--accent); text-decoration:none; }
+  .time{ font-size:0.85rem; color:var(--muted) }
+  .small{ font-size:0.84rem; color:var(--muted) }
+  .controls{ margin-left:auto; display:flex; gap:8px; align-items:center; }
+  button{ background:none; border:1px solid rgba(0,0,0,0.06); padding:6px 8px; border-radius:8px; cursor:pointer; color:var(--text); }
+  .center{ text-align:center; padding:20px; color:var(--muted) }
+  .spinner{ width:24px; height:24px; border-radius:50%; border:3px solid rgba(0,0,0,0.08); border-top-color:var(--accent); animation:spin 1s linear infinite; margin-right:8px; display:inline-block; vertical-align:middle }
+  @keyframes spin{ to{ transform:rotate(360deg) } }
+  small{ color:var(--muted) }
+  .note{ font-size:0.8rem; color:var(--muted); margin-top:8px }
+  a { color:inherit }
+</style>
+</head>
+<body>
+  <div class="wrap" id="app">
+    <h1>
+      <span style="font-size:1.25rem;">📰</span>
+      Ars Technica — Top articles
+      <div class="controls" style="margin-left:12px">
+        <button id="refreshBtn" title="Refresh now">Refresh</button>
+        <button id="toggleCount" title="Toggle 3 / 4 articles">4</button>
+      </div>
+    </h1>
+    <div class="meta">Source: <a href="https://arstechnica.com" target="_blank" rel="noopener">arstechnica.com</a> · Auto-refresh every <span id="autoIntervalText">30</span> minutes</div>
+
+    <div id="content">
+      <div class="center"><span class="spinner"></span> Loading articles…</div>
+    </div>
+
+    <div class="note">
+      If article images or headlines don't load, the page might be blocked by cross-origin rules (CORS). See troubleshooting steps below.
+    </div>
+  </div>
+
+<script>
+(async function(){
+  const FEED_RSS = encodeURIComponent('https://feeds.arstechnica.com/arstechnica/index');
+  // Using a public RSS->JSON endpoint. This is convenient but may have rate limits.
+  const RSS2JSON = 'https://api.rss2json.com/v1/api.json?rss_url=' + FEED_RSS;
+  // fallback: you can replace RSS_ENDPOINT with your own proxy URL if needed.
+  let RSS_ENDPOINT = RSS2JSON;
+
+  const app = document.getElementById('content');
+  const refreshBtn = document.getElementById('refreshBtn');
+  const toggleBtn = document.getElementById('toggleCount');
+  const autoIntervalText = document.getElementById('autoIntervalText');
+  let count = 4; // default cards
+  let autoMinutes = 30; // default auto-refresh
+  let autoTimer = null;
+
+  toggleBtn.addEventListener('click', ()=> {
+    count = (count === 4) ? 3 : 4;
+    toggleBtn.textContent = count;
+    fetchAndRender();
+  });
+  refreshBtn.addEventListener('click', fetchAndRender);
+
+  function timeAgo(dateStr){
+    try {
+      const d = new Date(dateStr);
+      const s = Math.floor((Date.now() - d.getTime())/1000);
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s/60); if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m/60); if (h < 24) return `${h}h ago`;
+      const days = Math.floor(h/24); return `${days}d ago`;
+    } catch(e){ return ''; }
+  }
+
+  async function fetchAndRender(){
+    app.innerHTML = '<div class="center"><span class="spinner"></span> Loading articles…</div>';
+    try {
+      const res = await fetch(RSS_ENDPOINT);
+      if (!res.ok) throw new Error('Feed fetch failed: ' + res.status);
+      const json = await res.json();
+
+      // rss2json response uses 'items' array; if you use a different proxy you may need to adapt.
+      const items = json.items || [];
+      if (!items.length) {
+        app.innerHTML = '<div class="center">No articles found.</div>';
+        return;
+      }
+      const cards = items.slice(0, count).map(item => {
+        const img = item.enclosure && item.enclosure.link ? item.enclosure.link :
+                    (item.thumbnail || '');
+        const excerpt = (item.description || item.contentSnippet || '').replace(/(<([^>]+)>)/gi, "");
+        const pub = item.pubDate || item.isoDate || '';
+        const title = item.title || '';
+        const link = item.link || '#';
+        return { img, excerpt, pub, title, link };
+      });
+
+      app.innerHTML = '';
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      cards.forEach(c => {
+        const card = document.createElement('article');
+        card.className = 'card';
+        if (c.img) {
+          const im = document.createElement('img');
+          im.className = 'thumb';
+          im.src = c.img;
+          im.alt = c.title;
+          card.appendChild(im);
+        }
+        const b = document.createElement('div'); b.className = 'body';
+        const a = document.createElement('a');
+        a.href = c.link; a.target = '_blank'; a.rel='noopener';
+        a.className = 'title';
+        a.textContent = c.title;
+        b.appendChild(a);
+        if (c.excerpt) {
+          const ex = document.createElement('div'); ex.className = 'excerpt';
+          ex.textContent = c.excerpt.length>220 ? c.excerpt.slice(0,220).trim() + '…' : c.excerpt;
+          b.appendChild(ex);
+        }
+        const f = document.createElement('div'); f.className = 'footer';
+        const time = document.createElement('div'); time.className='time'; time.textContent = timeAgo(c.pub);
+        const read = document.createElement('a'); read.className='read'; read.href=c.link; read.target='_blank'; read.rel='noopener'; read.textContent='Read';
+        f.appendChild(time); f.appendChild(read);
+        b.appendChild(f);
+        card.appendChild(b);
+        grid.appendChild(card);
+      });
+      app.appendChild(grid);
+    } catch (err) {
+      console.error(err);
+      app.innerHTML = '<div class="center">Failed to load feed.<br><small>' + (err.message || err) + '</small></div>';
+    }
+  }
+
+  // initial fetch
+  await fetchAndRender();
+
+  function startAuto(){
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = setInterval(fetchAndRender, autoMinutes * 60 * 1000);
+    autoIntervalText.textContent = autoMinutes;
+  }
+  startAuto();
+
+  // Expose a small UI to change autoMinutes via console if desired:
+  window.__AT = { setAutoMinutes(m){ autoMinutes = Number(m)||30; startAuto(); }, setProxy(url){ RSS_ENDPOINT = url; fetchAndRender(); } };
+
+})();
+</script>
+</body>
+</html>
